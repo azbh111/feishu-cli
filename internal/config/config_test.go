@@ -46,6 +46,7 @@ func TestInit_DefaultValues(t *testing.T) {
 	os.Unsetenv("FEISHU_APP_ID")
 	os.Unsetenv("FEISHU_APP_SECRET")
 	os.Unsetenv("FEISHU_BASE_URL")
+	os.Unsetenv("FEISHU_DOC_URL")
 	os.Unsetenv("FEISHU_DEBUG")
 	os.Unsetenv("FEISHU_USER_ACCESS_TOKEN")
 
@@ -58,11 +59,13 @@ func TestInit_DefaultValues(t *testing.T) {
 	if c.BaseURL != "https://open.feishu.cn" {
 		t.Errorf("BaseURL = %q, 期望 %q", c.BaseURL, "https://open.feishu.cn")
 	}
+	// DocURL 默认值
+	if c.DocURL != "https://feishu.cn" {
+		t.Errorf("DocURL = %q, 期望 %q", c.DocURL, "https://feishu.cn")
+	}
 	if c.Debug != false {
 		t.Errorf("Debug = %v, 期望 %v", c.Debug, false)
 	}
-	// 注意：由于 viper 可能从之前的配置文件读取，DownloadImages 的值可能因环境而异
-	// 这里只验证 AssetsDir 的默认值
 	if c.Export.AssetsDir != "./assets" {
 		t.Errorf("Export.AssetsDir = %q, 期望 %q", c.Export.AssetsDir, "./assets")
 	}
@@ -80,6 +83,7 @@ func TestInit_WithConfigFile(t *testing.T) {
 	content := `app_id: "file_app_id"
 app_secret: "file_app_secret"
 base_url: "https://custom.feishu.cn"
+doc_url: "https://custom.larkoffice.com"
 debug: true
 export:
   download_images: true
@@ -109,6 +113,10 @@ import:
 	}
 	if c.BaseURL != "https://custom.feishu.cn" {
 		t.Errorf("BaseURL = %q, 期望 %q", c.BaseURL, "https://custom.feishu.cn")
+	}
+	// DocURL 从配置文件读取
+	if c.DocURL != "https://custom.larkoffice.com" {
+		t.Errorf("DocURL = %q, 期望 %q", c.DocURL, "https://custom.larkoffice.com")
 	}
 	if c.Debug != true {
 		t.Errorf("Debug = %v, 期望 %v", c.Debug, true)
@@ -167,6 +175,9 @@ func TestGet_WithoutInit(t *testing.T) {
 	// 应返回默认配置
 	if c.BaseURL != "https://open.feishu.cn" {
 		t.Errorf("BaseURL = %q, 期望 %q", c.BaseURL, "https://open.feishu.cn")
+	}
+	if c.DocURL != "https://feishu.cn" {
+		t.Errorf("DocURL = %q, 期望 %q", c.DocURL, "https://feishu.cn")
 	}
 	if c.Export.AssetsDir != "./assets" {
 		t.Errorf("Export.AssetsDir = %q, 期望 %q", c.Export.AssetsDir, "./assets")
@@ -363,6 +374,23 @@ func TestInit_BaseURLFromEnv(t *testing.T) {
 	c := Get()
 	if c.BaseURL != "https://custom.lark.com" {
 		t.Errorf("BaseURL = %q, 期望 %q", c.BaseURL, "https://custom.lark.com")
+	}
+}
+
+func TestInit_DocURLFromEnv(t *testing.T) {
+	resetConfig()
+
+	os.Setenv("FEISHU_DOC_URL", "https://custom.larksuite.com")
+	defer os.Unsetenv("FEISHU_DOC_URL")
+
+	err := Init("")
+	if err != nil {
+		t.Fatalf("Init() 返回错误: %v", err)
+	}
+
+	c := Get()
+	if c.DocURL != "https://custom.larksuite.com" {
+		t.Errorf("DocURL = %q, 期望 %q", c.DocURL, "https://custom.larksuite.com")
 	}
 }
 
