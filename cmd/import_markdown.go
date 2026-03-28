@@ -624,11 +624,11 @@ func phase1CreateBlocks(
 
 					nestedCount, nestedErr := createNestedChildren(documentID, parentID, children)
 
-					// Callout 块：飞书 API 创建 Callout 时会自动生成一个空文本子块（位于 index 0），
-					// 在实际子块创建完成后将其删除，否则 Callout 中会多出一个空行
+					// Callout / QuoteContainer 块：飞书 API 创建时会自动生成一个空文本子块（位于 index 0），
+					// 在实际子块创建完成后将其删除，否则块内会多出一个空行
 					if idx < len(result.BlockNodes) {
 						node := result.BlockNodes[idx]
-						if node.Block.BlockType != nil && *node.Block.BlockType == int(converter.BlockTypeCallout) {
+						if node.Block.BlockType != nil && (*node.Block.BlockType == int(converter.BlockTypeCallout) || *node.Block.BlockType == int(converter.BlockTypeQuoteContainer)) {
 							// 防御性检查：先获取子块列表，确认 index 0 确实是空文本块再删除
 							shouldDelete := false
 							childrenResult := client.DoWithRetry(func() ([]*larkdocx.Block, http.Header, error) {
