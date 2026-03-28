@@ -54,6 +54,10 @@ func GetClient() (*lark.Client, error) {
 		if cfg.Debug {
 			opts = append(opts, lark.WithLogLevel(larkcore.LogLevelDebug))
 		}
+		// 使用磁盘缓存，跨进程复用 tenant_access_token
+		if cachePath := defaultCachePath(); cachePath != "" {
+			opts = append(opts, lark.WithTokenCache(newDiskCache(cachePath)))
+		}
 		instance = lark.NewClient(cfg.AppID, cfg.AppSecret, opts...)
 
 		// Save current config (不存储 secret 明文)
