@@ -473,8 +473,14 @@ func AddBoard(documentID string, parentID string, index int) (*AddBoardResult, e
 // Note: Feishu API automatically creates an empty text block in each cell when creating a table,
 // so we need to update the existing block instead of creating a new one to avoid duplicate rows.
 func FillTableCells(documentID string, cellIDs []string, contents []string) error {
+	_, err := FillTableCellsCounted(documentID, cellIDs, contents)
+	return err
+}
+
+// FillTableCellsCounted 与 FillTableCells 相同，额外返回实际 API 调用次数
+func FillTableCellsCounted(documentID string, cellIDs []string, contents []string) (int, error) {
 	if len(cellIDs) == 0 || len(contents) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	cellCount := min(len(cellIDs), len(contents))
@@ -498,8 +504,14 @@ func FillTableCells(documentID string, cellIDs []string, contents []string) erro
 // cellElements: each cell's text elements (in row-major order)
 // fallbackContents: plain text fallback for cells without elements
 func FillTableCellsRich(documentID string, cellIDs []string, cellElements [][]*larkdocx.TextElement, fallbackContents []string) error {
+	_, err := FillTableCellsRichCounted(documentID, cellIDs, cellElements, fallbackContents)
+	return err
+}
+
+// FillTableCellsRichCounted 与 FillTableCellsRich 相同，额外返回实际 API 调用次数
+func FillTableCellsRichCounted(documentID string, cellIDs []string, cellElements [][]*larkdocx.TextElement, fallbackContents []string) (int, error) {
 	if len(cellIDs) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// 合并 elements 和 fallback
@@ -519,8 +531,26 @@ func FillTableCellsRich(documentID string, cellIDs []string, cellElements [][]*l
 }
 
 // fillTableCellsInternal 是 FillTableCells 和 FillTableCellsRich 的统一实现
-func fillTableCellsInternal(documentID string, cellIDs []string, cellElements [][]*larkdocx.TextElement) error {
+// 优化策略：先获取所有 cell 子块 ID，将单块 cell 的更新合并为一次 BatchUpdate
+// 返回实际 API 调用次数
+func fillTableCellsInternal(documentID string, cellIDs []string, cellElements [][]*larkdocx.TextElement) (int, error) {
 	const maxRetries = 5
+	retryCfg := RetryConfig{
+		MaxRetries:       maxRetries,
+		MaxTotalAttempts: maxRetries + 5,
+		RetryOnRateLimit: true,
+	}
+	apiCalls := 0
+
+	// 第一步：分类所有 cell 为单块/多块/空
+	type cellInfo struct {
+		index    int
+		cellID   string
+		elements []*larkdocx.TextElement
+		groups   []cellBlockGroup // len > 1 表示多块
+	}
+	var singleCells []cellInfo // 单块 cell，可以批量更新
+	var multiCells []cellInfo  // 多块 cell，需逐个处理
 
 	for i, cellID := range cellIDs {
 		var elements []*larkdocx.TextElement
@@ -530,25 +560,85 @@ func fillTableCellsInternal(documentID string, cellIDs []string, cellElements []
 		if len(elements) == 0 {
 			continue
 		}
-
 		groups := splitCellElements(elements)
-
-		var err error
+		ci := cellInfo{index: i, cellID: cellID, elements: elements, groups: groups}
 		if len(groups) > 1 {
-			// 多块：删除已有空块后创建多个正确类型的块（支持标题、列表等）
-			err = fillCellMultiBlocks(documentID, cellID, groups, maxRetries)
+			multiCells = append(multiCells, ci)
 		} else {
-			// 单块：更新已有空块（飞书创建表格时自动生成）
-			err = fillCellSingleBlock(documentID, cellID, elements, maxRetries)
+			singleCells = append(singleCells, ci)
 		}
-		if err != nil {
-			return fmt.Errorf("填充单元格 %d 失败: %w", i, err)
-		}
-
-		throttlePer5(i)
 	}
 
-	return nil
+	// 第二步：获取所有单块 cell 的子块 ID，然后一次 BatchUpdate
+	if len(singleCells) > 0 {
+		type batchItem struct {
+			childBlockID string
+			elements     []*larkdocx.TextElement
+		}
+		var batchItems []batchItem
+		var fallbackCells []cellInfo
+
+		for _, ci := range singleCells {
+			children, err := GetBlockChildren(documentID, ci.cellID)
+			apiCalls++ // GetBlockChildren
+			if err != nil || len(children) == 0 {
+				fallbackCells = append(fallbackCells, ci)
+				continue
+			}
+			childID := StringVal(children[0].BlockId)
+			if childID == "" {
+				fallbackCells = append(fallbackCells, ci)
+				continue
+			}
+			batchItems = append(batchItems, batchItem{childBlockID: childID, elements: ci.elements})
+		}
+
+		// 批量更新：N 个 cell 内容合并为 1 次 API
+		if len(batchItems) > 0 {
+			var requests []map[string]any
+			for _, item := range batchItems {
+				requests = append(requests, map[string]any{
+					"block_id":             item.childBlockID,
+					"update_text_elements": map[string]any{"elements": buildElementsJSON(item.elements)},
+				})
+			}
+			reqJSON, _ := json.Marshal(requests)
+			result := DoWithRetry(func() (*BatchUpdateBlocksResult, http.Header, error) {
+				r, err := BatchUpdateBlocks(documentID, string(reqJSON), BatchUpdateBlocksOptions{})
+				return r, nil, err
+			}, retryCfg)
+			apiCalls++ // BatchUpdateBlocks
+			if result.Err != nil {
+				// BatchUpdate 失败，降级为逐个更新
+				for _, item := range batchItems {
+					updateContent := buildCellUpdateContent(item.elements)
+					DoVoidWithRetry(func() (http.Header, error) {
+						return nil, UpdateBlock(documentID, item.childBlockID, updateContent)
+					}, retryCfg)
+					apiCalls++
+				}
+			}
+		}
+
+		// 降级 cell
+		for _, ci := range fallbackCells {
+			if err := fillCellSingleBlock(documentID, ci.cellID, ci.elements, maxRetries); err != nil {
+				return apiCalls, fmt.Errorf("填充单元格 %d 失败: %w", ci.index, err)
+			}
+			apiCalls += 2 // GetBlockChildren + UpdateBlock
+		}
+	}
+
+	// 第三步：多块 cell 逐个处理
+	for _, ci := range multiCells {
+		if err := fillCellMultiBlocks(documentID, ci.cellID, ci.groups, maxRetries); err != nil {
+			return apiCalls, fmt.Errorf("填充单元格 %d 失败: %w", ci.index, err)
+		}
+		// GetBlockChildren + UpdateBlock + (len(groups)-1) × CreateBlock
+		apiCalls += 1 + len(ci.groups)
+	}
+
+	return apiCalls, nil
 }
 
 // fillCellSingleBlock 用单个文本块填充单元格（优先更新已有空块）
