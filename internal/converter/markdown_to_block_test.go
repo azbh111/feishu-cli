@@ -151,6 +151,58 @@ func TestConvert_OrderedList(t *testing.T) {
 	}
 }
 
+func TestConvert_OrderedListCustomStart(t *testing.T) {
+	markdown := "3. 第三项\n4. 第四项"
+
+	converter := NewMarkdownToBlock([]byte(markdown), ConvertOptions{}, "")
+	blocks, err := converter.Convert()
+	if err != nil {
+		t.Fatalf("Convert() 返回错误: %v", err)
+	}
+	if len(blocks) < 2 {
+		t.Fatalf("blocks 数量 = %d, 期望至少 2", len(blocks))
+	}
+
+	// 每一项都应设置显式 Sequence（飞书不会从前一项的自定义序号继续）
+	expects := []string{"3", "4"}
+	for i, expect := range expects {
+		b := blocks[i]
+		if b.Ordered == nil {
+			t.Fatalf("blocks[%d].Ordered 为 nil", i)
+		}
+		if b.Ordered.Style == nil || b.Ordered.Style.Sequence == nil {
+			t.Fatalf("blocks[%d] 缺少 TextStyle.Sequence，自定义编号丢失", i)
+		}
+		if got := *b.Ordered.Style.Sequence; got != expect {
+			t.Errorf("blocks[%d].Sequence = %q, 期望 %q", i, got, expect)
+		}
+	}
+}
+
+func TestConvert_OrderedListDefaultStart(t *testing.T) {
+	// 默认起始编号（Start=1）不应设置 Sequence
+	markdown := "1. 第一项\n2. 第二项"
+
+	converter := NewMarkdownToBlock([]byte(markdown), ConvertOptions{}, "")
+	blocks, err := converter.Convert()
+	if err != nil {
+		t.Fatalf("Convert() 返回错误: %v", err)
+	}
+	if len(blocks) < 2 {
+		t.Fatalf("blocks 数量 = %d, 期望至少 2", len(blocks))
+	}
+
+	for i, b := range blocks[:2] {
+		if b.Ordered == nil {
+			t.Fatalf("blocks[%d].Ordered 为 nil", i)
+		}
+		// 默认列表不应有 Sequence
+		if b.Ordered.Style != nil && b.Ordered.Style.Sequence != nil {
+			t.Errorf("blocks[%d] 不应设置 Sequence（默认列表），got %q", i, *b.Ordered.Style.Sequence)
+		}
+	}
+}
+
 func TestConvert_TaskList(t *testing.T) {
 	markdown := `- [ ] 未完成任务
 - [x] 已完成任务`

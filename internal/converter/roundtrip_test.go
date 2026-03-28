@@ -184,6 +184,50 @@ func TestRoundtrip_Todo(t *testing.T) {
 	}
 }
 
+// TestRoundtrip_OrderedListCustomStart 测试自定义起始编号的有序列表往返一致性
+func TestRoundtrip_OrderedListCustomStart(t *testing.T) {
+	markdown := "3. 第三项\n4. 第四项"
+
+	conv := NewMarkdownToBlock([]byte(markdown), ConvertOptions{}, "")
+	blocks, err := conv.Convert()
+	if err != nil {
+		t.Fatalf("Markdown → Block 失败: %v", err)
+	}
+
+	conv2 := NewBlockToMarkdown(blocks, ConvertOptions{})
+	result, err := conv2.Convert()
+	if err != nil {
+		t.Fatalf("Block → Markdown 失败: %v", err)
+	}
+
+	result = strings.TrimSpace(result)
+	if result != markdown {
+		t.Errorf("往返不一致:\n  输入: %q\n  输出: %q", markdown, result)
+	}
+}
+
+// TestRoundtrip_OrderedListDefault 测试默认起始编号的有序列表往返一致性
+func TestRoundtrip_OrderedListDefault(t *testing.T) {
+	markdown := "1. 第一项\n2. 第二项\n3. 第三项"
+
+	conv := NewMarkdownToBlock([]byte(markdown), ConvertOptions{}, "")
+	blocks, err := conv.Convert()
+	if err != nil {
+		t.Fatalf("Markdown → Block 失败: %v", err)
+	}
+
+	conv2 := NewBlockToMarkdown(blocks, ConvertOptions{})
+	result, err := conv2.Convert()
+	if err != nil {
+		t.Fatalf("Block → Markdown 失败: %v", err)
+	}
+
+	result = strings.TrimSpace(result)
+	if result != markdown {
+		t.Errorf("往返不一致:\n  输入: %q\n  输出: %q", markdown, result)
+	}
+}
+
 // TestRoundtrip_KnownLoss 记录已知的信息丢失项
 func TestRoundtrip_KnownLoss(t *testing.T) {
 	knownLosses := []struct {
