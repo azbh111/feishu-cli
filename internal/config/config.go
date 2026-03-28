@@ -14,6 +14,7 @@ type Config struct {
 	AppSecret         string       `mapstructure:"app_secret"`
 	UserAccessToken   string       `mapstructure:"user_access_token"`
 	BaseURL           string       `mapstructure:"base_url"`
+	DocURL            string       `mapstructure:"doc_url"`
 	OwnerEmail        string       `mapstructure:"owner_email"`
 	TransferOwnership bool         `mapstructure:"transfer_ownership"`
 	Debug             bool         `mapstructure:"debug"`
@@ -55,6 +56,7 @@ func Init(cfgFile string) error {
 
 	// 2. 设置默认值
 	viper.SetDefault("base_url", "https://open.feishu.cn")
+	viper.SetDefault("doc_url", "https://feishu.cn")
 	viper.SetDefault("owner_email", "")
 	viper.SetDefault("transfer_ownership", false)
 	viper.SetDefault("debug", false)
@@ -71,6 +73,7 @@ func Init(cfgFile string) error {
 	_ = viper.BindEnv("app_secret", "FEISHU_APP_SECRET")
 	_ = viper.BindEnv("user_access_token", "FEISHU_USER_ACCESS_TOKEN")
 	_ = viper.BindEnv("base_url", "FEISHU_BASE_URL")
+	_ = viper.BindEnv("doc_url", "FEISHU_DOC_URL")
 	_ = viper.BindEnv("owner_email", "FEISHU_OWNER_EMAIL")
 	_ = viper.BindEnv("transfer_ownership", "FEISHU_TRANSFER_OWNERSHIP")
 	_ = viper.BindEnv("debug", "FEISHU_DEBUG")
@@ -95,6 +98,7 @@ func Get() *Config {
 	if cfg == nil {
 		return &Config{
 			BaseURL:           "https://open.feishu.cn",
+			DocURL:            "https://feishu.cn",
 			OwnerEmail:        "",
 			TransferOwnership: false,
 			Export: ExportConfig{
@@ -152,6 +156,7 @@ func CreateDefaultConfig() error {
 app_id: ""
 app_secret: ""
 base_url: "https://open.feishu.cn"
+doc_url: "https://feishu.cn"     # 文档链接前缀（环境变量: FEISHU_DOC_URL）
 owner_email: ""              # 文档创建后自动授权的邮箱（环境变量: FEISHU_OWNER_EMAIL）
 transfer_ownership: false    # 创建文档后是否转移所有权给 owner_email（默认仅添加 full_access）
 debug: false
