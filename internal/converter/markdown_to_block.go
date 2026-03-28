@@ -395,10 +395,22 @@ func (c *MarkdownToBlock) convertCodeBlock(node *ast.FencedCodeBlock) (*larkdocx
 func (c *MarkdownToBlock) convertList(node *ast.List) ([]*BlockNode, error) {
 	var nodes []*BlockNode
 	isOrdered := node.IsOrdered()
+	// 有序列表自定义起始编号：Start != 1 时，每项都需设置显式 Sequence
+	// （飞书不会从前一项的自定义序号自动继续，无 Sequence 的项按位置编号）
+	startNum := 0
+	if isOrdered && node.Start > 1 {
+		startNum = node.Start
+	}
 
+	itemIndex := 0
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 		if listItem, ok := child.(*ast.ListItem); ok {
-			bn, err := c.convertListItem(listItem, isOrdered)
+			seq := 0
+			if startNum > 0 {
+				seq = startNum + itemIndex
+			}
+			itemIndex++
+			bn, err := c.convertListItem(listItem, isOrdered, seq)
 			if err != nil {
 				return nil, err
 			}
@@ -411,7 +423,8 @@ func (c *MarkdownToBlock) convertList(node *ast.List) ([]*BlockNode, error) {
 	return nodes, nil
 }
 
-func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool) (*BlockNode, error) {
+// convertListItem 转换列表项。seq > 0 表示该项需设置自定义序号（仅有序列表首项）
+func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool, seq int) (*BlockNode, error) {
 	// Check for GFM task list checkbox
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 		// Check if this is a paragraph or text block containing a TaskCheckBox
@@ -422,7 +435,9 @@ func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool) (*
 					if err != nil {
 						return nil, err
 					}
-					return &BlockNode{Block: block}, nil
+					// 收集嵌套子列表（与 bullet/ordered 一致）
+					children := c.collectNestedChildren(node)
+					return &BlockNode{Block: block, Children: children}, nil
 				}
 			}
 		}
@@ -433,7 +448,9 @@ func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool) (*
 					if err != nil {
 						return nil, err
 					}
-					return &BlockNode{Block: block}, nil
+					// 收集嵌套子列表（与 bullet/ordered 一致）
+					children := c.collectNestedChildren(node)
+					return &BlockNode{Block: block, Children: children}, nil
 				}
 				// Also check for raw text pattern
 				if txt, ok := tb.FirstChild().(*ast.Text); ok {
@@ -443,7 +460,9 @@ func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool) (*
 						if err != nil {
 							return nil, err
 						}
-						return &BlockNode{Block: block}, nil
+						// 收集嵌套子列表（与 bullet/ordered 一致）
+						children := c.collectNestedChildren(node)
+						return &BlockNode{Block: block, Children: children}, nil
 					}
 				}
 			}
@@ -479,9 +498,15 @@ func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool) (*
 	var block *larkdocx.Block
 	if isOrdered {
 		blockType := int(BlockTypeOrdered)
+		orderedText := &larkdocx.Text{Elements: elements}
+		// 自定义起始编号：在首项上设置 Sequence
+		if seq > 0 {
+			seqStr := fmt.Sprintf("%d", seq)
+			orderedText.Style = &larkdocx.TextStyle{Sequence: &seqStr}
+		}
 		block = &larkdocx.Block{
 			BlockType: &blockType,
-			Ordered:   &larkdocx.Text{Elements: elements},
+			Ordered:   orderedText,
 		}
 	} else {
 		blockType := int(BlockTypeBullet)
@@ -492,6 +517,18 @@ func (c *MarkdownToBlock) convertListItem(node *ast.ListItem, isOrdered bool) (*
 	}
 
 	return &BlockNode{Block: block, Children: children}, nil
+}
+
+// collectNestedChildren 收集 ListItem 下嵌套的子列表，返回 BlockNode 切片
+func (c *MarkdownToBlock) collectNestedChildren(node *ast.ListItem) []*BlockNode {
+	var children []*BlockNode
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		if nestedList, ok := child.(*ast.List); ok {
+			childNodes, _ := c.convertList(nestedList)
+			children = append(children, childNodes...)
+		}
+	}
+	return children
 }
 
 // extractListItemDirectElements 提取 ListItem 直接子节点的文本元素，
@@ -561,6 +598,11 @@ func (c *MarkdownToBlock) extractTextElementsSkipCheckbox(node ast.Node) []*lark
 
 		// Skip TaskCheckBox nodes
 		if _, ok := n.(*east.TaskCheckBox); ok {
+			return ast.WalkSkipChildren, nil
+		}
+
+		// 跳过嵌套列表——它们作为 BlockNode.Children 单独处理
+		if _, ok := n.(*ast.List); ok {
 			return ast.WalkSkipChildren, nil
 		}
 

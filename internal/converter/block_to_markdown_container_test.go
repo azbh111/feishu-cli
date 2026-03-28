@@ -1237,6 +1237,43 @@ func TestConvertOrderedWithEmptySequence(t *testing.T) {
 	}
 }
 
+// 导出侧：自定义 Sequence 不应污染后续无 Sequence 项的编号
+func TestConvertOrderedCustomSeqNoContamination(t *testing.T) {
+	blocks := []*larkdocx.Block{
+		{
+			BlockId:   strPtr("o1"),
+			BlockType: intPtr(int(BlockTypeOrdered)),
+			Ordered: &larkdocx.Text{
+				Elements: []*larkdocx.TextElement{
+					{TextRun: &larkdocx.TextRun{Content: strPtr("Item A")}},
+				},
+				Style: &larkdocx.TextStyle{Sequence: strPtr("3")},
+			},
+		},
+		{
+			BlockId:   strPtr("o2"),
+			BlockType: intPtr(int(BlockTypeOrdered)),
+			Ordered: &larkdocx.Text{
+				Elements: []*larkdocx.TextElement{
+					{TextRun: &larkdocx.TextRun{Content: strPtr("Item B")}},
+				},
+				// 无 Sequence：飞书按位置编号，第 2 项应为 2
+			},
+		},
+	}
+	conv := NewBlockToMarkdown(blocks, ConvertOptions{})
+	got, err := conv.Convert()
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	got = strings.TrimSpace(got)
+	// 飞书对无 Sequence 的项从前一项有效编号续编，第 2 项 = 4（3+1）
+	want := "3. Item A\n4. Item B"
+	if got != want {
+		t.Errorf("Convert() got:\n%s\n\nwant:\n%s", got, want)
+	}
+}
+
 func TestConvertBulletWithNestedSublist(t *testing.T) {
 	blocks := []*larkdocx.Block{
 		{

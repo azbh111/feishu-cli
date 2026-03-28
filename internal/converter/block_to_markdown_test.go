@@ -323,8 +323,8 @@ func TestBlockToMd_OrderedList(t *testing.T) {
 	if !strings.Contains(result, "1. 第一项") {
 		t.Errorf("结果不包含 '1. 第一项': %s", result)
 	}
-	if !strings.Contains(result, "1. 第二项") {
-		t.Errorf("结果不包含 '1. 第二项': %s", result)
+	if !strings.Contains(result, "2. 第二项") {
+		t.Errorf("结果不包含 '2. 第二项': %s", result)
 	}
 }
 

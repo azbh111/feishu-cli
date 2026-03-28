@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	larkdocx "github.com/larksuite/oapi-sdk-go/v3/service/docx/v1"
@@ -25,6 +26,7 @@ type BlockToMarkdown struct {
 	imageCount    int
 	headingSeqs   []string                   // 标题自动编号状态，按深度索引（depth-1）
 	userCache     map[string]MentionUserInfo // 用户 ID → 信息缓存
+	orderedSeq    int                        // 当前顶层有序列表的自增序号（Convert 时使用）
 }
 
 // NewBlockToMarkdown creates a new converter
@@ -79,7 +81,7 @@ func NewBlockToMarkdown(blocks []*larkdocx.Block, options ConvertOptions) *Block
 					collectChildren(childID)
 				}
 			}
-		case BlockTypeBullet, BlockTypeOrdered:
+		case BlockTypeBullet, BlockTypeOrdered, BlockTypeTodo:
 			// 嵌套列表：子块由父列表递归处理
 			if block.Children != nil {
 				for _, childID := range block.Children {
@@ -223,6 +225,11 @@ func (c *BlockToMarkdown) Convert() (string, error) {
 
 		currentBlockType := BlockType(*block.BlockType)
 
+		// 有序列表序号：Ordered 块自增，非 Ordered 块不重置（飞书 auto 跨标题续编）
+		if currentBlockType == BlockTypeOrdered {
+			c.orderedSeq++
+		}
+
 		// 列表类型切换时插入额外空行
 		if prevBlockType != 0 {
 			prevIsList := isListBlockType(prevBlockType)
@@ -241,7 +248,10 @@ func (c *BlockToMarkdown) Convert() (string, error) {
 		}
 		if md != "" {
 			sb.WriteString(md)
-			sb.WriteString("\n")
+			// 列表块不加额外 \n（块自身已有 \n，列表间距由上方的类型切换逻辑控制）
+			if !isListBlockType(currentBlockType) {
+				sb.WriteString("\n")
+			}
 			prevBlockType = currentBlockType
 		}
 	}
@@ -253,6 +263,59 @@ func (c *BlockToMarkdown) Convert() (string, error) {
 	output = reBlankLines.ReplaceAllString(output, "\n\n")
 
 	return output, nil
+}
+
+// BlockMarkdown 表示一个顶层块的 markdown 输出和对应的 blockID
+type BlockMarkdown struct {
+	BlockID  string // 顶层块 ID
+	Markdown string // 该块产出的 markdown 文本（不含块间分隔空行）
+}
+
+// ConvertPerBlock 在完整文档上下文中逐块转换，返回每个顶层块的 markdown 输出
+// 与 Convert() 使用相同的转换逻辑，区别是返回值按块拆分
+func (c *BlockToMarkdown) ConvertPerBlock() ([]BlockMarkdown, error) {
+	var result []BlockMarkdown
+
+	for _, block := range c.blocks {
+		if block.BlockType == nil {
+			continue
+		}
+		// 跳过 Page 块
+		if *block.BlockType == int(BlockTypePage) {
+			continue
+		}
+		// 跳过子块
+		if block.BlockId != nil && c.childBlockIDs[*block.BlockId] {
+			continue
+		}
+
+		// 有序列表序号追踪（与 Convert 一致）
+		blockType := BlockType(*block.BlockType)
+		if blockType == BlockTypeOrdered {
+			c.orderedSeq++
+		}
+
+		md, err := c.convertBlock(block, 0)
+		if err != nil {
+			return nil, err
+		}
+		if md == "" {
+			continue
+		}
+		// 去掉尾部多余换行，保持干净
+		md = strings.TrimRight(md, "\n")
+
+		blockID := ""
+		if block.BlockId != nil {
+			blockID = *block.BlockId
+		}
+		result = append(result, BlockMarkdown{
+			BlockID:  blockID,
+			Markdown: md,
+		})
+	}
+
+	return result, nil
 }
 
 func (c *BlockToMarkdown) convertBlock(block *larkdocx.Block, indent int) (string, error) {
@@ -322,7 +385,7 @@ func (c *BlockToMarkdown) convertBlockWithDepth(block *larkdocx.Block, indent in
 	case BlockTypeEquation:
 		return c.convertEquation(block)
 	case BlockTypeTodo:
-		return c.convertTodo(block)
+		return c.convertTodoWithDepth(block, indent, depth)
 	case BlockTypeDivider:
 		return "---\n", nil
 	case BlockTypeImage:
@@ -632,11 +695,27 @@ func (c *BlockToMarkdown) convertBullet(block *larkdocx.Block, indent, depth int
 	prefix := strings.Repeat("  ", indent)
 	result := fmt.Sprintf("%s- %s\n", prefix, text)
 
-	// 递归处理嵌套子列表
+	// 递归处理嵌套子列表（为嵌套有序列表独立计数）
 	if block.Children != nil {
+		childOrderedSeq := 0
 		for _, childID := range block.Children {
 			childBlock := c.blockMap[childID]
-			if childBlock != nil {
+			if childBlock == nil {
+				continue
+			}
+			childType := BlockType(0)
+			if childBlock.BlockType != nil {
+				childType = BlockType(*childBlock.BlockType)
+			}
+			if childType == BlockTypeOrdered {
+				childOrderedSeq++
+				savedSeq := c.orderedSeq
+				c.orderedSeq = childOrderedSeq
+				childMd, _ := c.convertBlockWithDepth(childBlock, indent+1, depth+1)
+				c.orderedSeq = savedSeq
+				result += childMd
+			} else {
+				childOrderedSeq = 0 // 类型切换时重置
 				childMd, _ := c.convertBlockWithDepth(childBlock, indent+1, depth+1)
 				result += childMd
 			}
@@ -652,20 +731,47 @@ func (c *BlockToMarkdown) convertOrdered(block *larkdocx.Block, indent, depth in
 	text := c.convertTextElements(block.Ordered.Elements)
 	prefix := strings.Repeat("  ", indent)
 
-	seq := "1"
+	// 顶层用 c.orderedSeq（由 Convert/ConvertPerBlock 维护）；嵌套子列表由父块计数传入
+	seq := c.orderedSeq
+	// 支持自定义序号：读取 TextStyle.Sequence 覆盖当前项编号
+	// 飞书对无 Sequence 的项从前一项有效编号续编
 	if block.Ordered.Style != nil && block.Ordered.Style.Sequence != nil {
 		s := *block.Ordered.Style.Sequence
-		if s != "auto" && s != "" {
-			seq = s
+		if s != "" && s != "auto" {
+			if n, err := strconv.Atoi(s); err == nil && n > 0 {
+				seq = n
+				// 更新计数器，让后续无 Sequence 的项从此编号续编
+				c.orderedSeq = n
+			}
 		}
 	}
-	result := fmt.Sprintf("%s%s. %s\n", prefix, seq, text)
+	if seq <= 0 {
+		seq = 1
+	}
+	result := fmt.Sprintf("%s%d. %s\n", prefix, seq, text)
 
-	// 递归处理嵌套子列表
+	// 递归处理嵌套子列表（为嵌套有序列表独立计数）
 	if block.Children != nil {
+		childOrderedSeq := 0
 		for _, childID := range block.Children {
 			childBlock := c.blockMap[childID]
-			if childBlock != nil {
+			if childBlock == nil {
+				continue
+			}
+			childType := BlockType(0)
+			if childBlock.BlockType != nil {
+				childType = BlockType(*childBlock.BlockType)
+			}
+			// 嵌套有序列表：独立自增序号
+			if childType == BlockTypeOrdered {
+				childOrderedSeq++
+				savedSeq := c.orderedSeq
+				c.orderedSeq = childOrderedSeq
+				childMd, _ := c.convertBlockWithDepth(childBlock, indent+1, depth+1)
+				c.orderedSeq = savedSeq
+				result += childMd
+			} else {
+				childOrderedSeq = 0 // 类型切换时重置
 				childMd, _ := c.convertBlockWithDepth(childBlock, indent+1, depth+1)
 				result += childMd
 			}
@@ -711,6 +817,10 @@ func (c *BlockToMarkdown) convertEquation(block *larkdocx.Block) (string, error)
 }
 
 func (c *BlockToMarkdown) convertTodo(block *larkdocx.Block) (string, error) {
+	return c.convertTodoWithDepth(block, 0, 0)
+}
+
+func (c *BlockToMarkdown) convertTodoWithDepth(block *larkdocx.Block, indent, depth int) (string, error) {
 	if block.Todo == nil {
 		return "", nil
 	}
@@ -721,7 +831,36 @@ func (c *BlockToMarkdown) convertTodo(block *larkdocx.Block) (string, error) {
 	}
 
 	text := c.convertTextElements(block.Todo.Elements)
-	return fmt.Sprintf("- %s %s\n", checkbox, text), nil
+	prefix := strings.Repeat("  ", indent)
+	result := fmt.Sprintf("%s- %s %s\n", prefix, checkbox, text)
+
+	// 递归处理嵌套子项（与 convertBullet 一致）
+	if block.Children != nil {
+		childOrderedSeq := 0
+		for _, childID := range block.Children {
+			childBlock := c.blockMap[childID]
+			if childBlock == nil {
+				continue
+			}
+			childType := BlockType(0)
+			if childBlock.BlockType != nil {
+				childType = BlockType(*childBlock.BlockType)
+			}
+			if childType == BlockTypeOrdered {
+				childOrderedSeq++
+				savedSeq := c.orderedSeq
+				c.orderedSeq = childOrderedSeq
+				childMd, _ := c.convertBlockWithDepth(childBlock, indent+1, depth+1)
+				c.orderedSeq = savedSeq
+				result += childMd
+			} else {
+				childOrderedSeq = 0
+				childMd, _ := c.convertBlockWithDepth(childBlock, indent+1, depth+1)
+				result += childMd
+			}
+		}
+	}
+	return result, nil
 }
 
 func (c *BlockToMarkdown) convertImage(block *larkdocx.Block) (string, error) {
@@ -890,6 +1029,11 @@ func (c *BlockToMarkdown) getCellTextWithDepth(block *larkdocx.Block, depth int)
 		return "[递归深度超限]"
 	}
 
+	// 隔离 orderedSeq：表格单元格内的有序列表不应影响外层计数器
+	savedSeq := c.orderedSeq
+	c.orderedSeq = 0
+	defer func() { c.orderedSeq = savedSeq }()
+
 	// Table cells may contain nested blocks
 	if block.Children != nil {
 		var texts []string
@@ -947,6 +1091,11 @@ func (c *BlockToMarkdown) convertCalloutWithDepth(block *larkdocx.Block, depth i
 			calloutType = "IMPORTANT"
 		}
 	}
+
+	// 隔离 orderedSeq：Callout 内的有序列表不应影响外层计数器
+	savedSeq := c.orderedSeq
+	c.orderedSeq = 0
+	defer func() { c.orderedSeq = savedSeq }()
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("> [!%s]\n", calloutType))
@@ -1217,6 +1366,11 @@ func (c *BlockToMarkdown) convertQuoteContainerWithDepth(block *larkdocx.Block, 
 	if depth > maxRecursionDepth {
 		return "> [递归深度超限]\n", nil
 	}
+
+	// 隔离 orderedSeq：引用块内的有序列表不应影响外层计数器
+	savedSeq := c.orderedSeq
+	c.orderedSeq = 0
+	defer func() { c.orderedSeq = savedSeq }()
 
 	var sb strings.Builder
 
