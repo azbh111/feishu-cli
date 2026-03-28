@@ -14,7 +14,11 @@ import (
 const (
 	blockTypeText   = 2
 	blockTypeBullet = 12
+	blockTypeAddOns = 40
 	blockTypeBoard  = 43
+
+	// 文本绘图组件 ID
+	componentTypeTextDrawing = "blk_631fefbbae02400430b8f9f4"
 )
 
 // CreateDocument creates a new document
@@ -426,6 +430,48 @@ func GetAllBlockChildren(documentID string, blockID string) ([]*larkdocx.Block, 
 	}
 
 	return allChildren, nil
+}
+
+// AddTextDrawing 创建文本绘图块（AddOns block_type=40），将 Mermaid 源码内嵌到文档中
+func AddTextDrawing(documentID string, parentID string, mermaidCode string, index int) (string, error) {
+	if parentID == "" {
+		parentID = documentID
+	}
+
+	// 构建 record JSON
+	record := fmt.Sprintf(`{"data":%s,"theme":"default","view":"codeChart"}`,
+		jsonEscapeString(mermaidCode))
+
+	blockType := blockTypeAddOns
+	addOnsBlock := &larkdocx.Block{
+		BlockType: &blockType,
+		AddOns: &larkdocx.AddOns{
+			ComponentTypeId: strPtr(componentTypeTextDrawing),
+			Record:          &record,
+		},
+	}
+
+	createdBlocks, err := CreateBlock(documentID, parentID, []*larkdocx.Block{addOnsBlock}, index)
+	if err != nil {
+		return "", fmt.Errorf("创建文本绘图块失败: %w", err)
+	}
+
+	if len(createdBlocks) == 0 {
+		return "", fmt.Errorf("创建文本绘图块失败：未返回块信息")
+	}
+
+	return StringVal(createdBlocks[0].BlockId), nil
+}
+
+// jsonEscapeString 将字符串转为 JSON 字符串字面量（含双引号）
+func jsonEscapeString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// strPtr 返回字符串指针
+func strPtr(s string) *string {
+	return &s
 }
 
 // AddBoardResult contains the result of adding a board to document

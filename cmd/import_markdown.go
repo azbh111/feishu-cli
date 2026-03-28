@@ -747,7 +747,30 @@ func phase1CreateBlocks(
 				}
 			}
 
-		} else if seg.kind == "mermaid" || seg.kind == "plantuml" {
+		} else if seg.kind == "mermaid" {
+			// Mermaid 图表：直接创建 AddOns 文本绘图块（block_type=40）
+			diagramIdx++
+
+			if verbose {
+				fmt.Printf("  [Mermaid %d] 创建文本绘图块...\n", diagramIdx)
+			}
+
+			blockID, err := client.AddTextDrawing(documentID, "", seg.content, -1)
+			if err != nil {
+				fmt.Printf("  ✗ Mermaid %d 创建文本绘图失败: %v\n", diagramIdx, err)
+				stats.diagramFailed++
+				continue
+			}
+
+			stats.totalBlocks++
+			stats.diagramSuccess++
+
+			if verbose {
+				fmt.Printf("  [Mermaid %d] 文本绘图已创建: %s\n", diagramIdx, blockID)
+			}
+
+		} else if seg.kind == "plantuml" {
+			// PlantUML 图表：保持画板导入方式
 			diagramIdx++
 			syntaxLabel := diagramSyntaxLabel(seg.kind)
 
@@ -755,7 +778,6 @@ func phase1CreateBlocks(
 				fmt.Printf("  [%s %d] 创建画板占位块...\n", syntaxLabel, diagramIdx)
 			}
 
-			// 只创建画板占位块，不导入图表
 			boardResult, err := client.AddBoard(documentID, "", -1)
 			if err != nil {
 				fmt.Printf("  ✗ %s %d 创建画板失败: %v\n", syntaxLabel, diagramIdx, err)
