@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,8 +49,10 @@ func GetClient() (*lark.Client, error) {
 		lastCfg.debug != cfg.Debug
 
 	if configChanged {
+		// 去掉尾部斜杠，避免拼接出双斜杠（私有化部署服务器不容忍）
+		baseURL := strings.TrimRight(cfg.BaseURL, "/")
 		opts := []lark.ClientOptionFunc{
-			lark.WithOpenBaseUrl(cfg.BaseURL),
+			lark.WithOpenBaseUrl(baseURL),
 		}
 		if cfg.Debug {
 			opts = append(opts, lark.WithLogLevel(larkcore.LogLevelDebug))
