@@ -68,6 +68,7 @@ var exportMarkdownCmd = &cobra.Command{
 			FrontMatter:     frontMatter,
 			Highlight:       highlight,
 			ExpandMentions:  expandMentions,
+			DocURL:          cfg.DocURL,
 		}
 
 		var conv *converter.BlockToMarkdown

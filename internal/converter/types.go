@@ -1,6 +1,12 @@
 package converter
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// DefaultDocURL 默认文档链接前缀
+const DefaultDocURL = "https://feishu.cn"
 
 // BlockType represents Feishu block types
 type BlockType int
@@ -103,6 +109,15 @@ type ConvertOptions struct {
 	FrontMatter         bool   // 为 true 时，导出时添加 YAML front matter
 	Highlight           bool   // 为 true 时，导出文本颜色和背景色为 HTML span
 	ExpandMentions      bool   // 导出时展开 @用户为友好格式（默认 false，CLI 默认 true）
+	DocURL              string // 文档链接前缀，默认 https://feishu.cn（环境变量: FEISHU_DOC_URL）
+}
+
+// DocURLOrDefault 返回 DocURL，为空时返回默认值
+func (o ConvertOptions) DocURLOrDefault() string {
+	if o.DocURL == "" {
+		return DefaultDocURL
+	}
+	return strings.TrimRight(o.DocURL, "/")
 }
 
 // ConvertResult contains converted blocks and table data

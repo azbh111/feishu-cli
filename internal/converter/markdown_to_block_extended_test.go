@@ -61,9 +61,107 @@ func TestNormalizeURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := normalizeURL(tt.input)
+			result := normalizeURL(tt.input, "")
 			if result != tt.expected {
 				t.Errorf("normalizeURL(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// normalizeURL 自定义 DocURL 测试
+func TestNormalizeURL_CustomDocURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		docURL   string
+		expected string
+	}{
+		{
+			name:     "自定义 DocURL: feishu://doc/ 转换",
+			input:    "feishu://doc/ABC123",
+			docURL:   "https://custom.larkoffice.com",
+			expected: "https://custom.larkoffice.com/docx/ABC123",
+		},
+		{
+			name:     "自定义 DocURL: feishu://wiki/ 转换",
+			input:    "feishu://wiki/NODE456",
+			docURL:   "https://custom.larkoffice.com",
+			expected: "https://custom.larkoffice.com/wiki/NODE456",
+		},
+		{
+			name:     "自定义 DocURL: 通用 feishu:// 转换",
+			input:    "feishu://board/token",
+			docURL:   "https://custom.larksuite.com",
+			expected: "https://custom.larksuite.com/board/token",
+		},
+		{
+			name:     "自定义 DocURL 末尾斜杠被去除",
+			input:    "feishu://doc/ABC123",
+			docURL:   "https://custom.larkoffice.com/",
+			expected: "https://custom.larkoffice.com/docx/ABC123",
+		},
+		{
+			name:     "非 feishu:// 链接不受 DocURL 影响",
+			input:    "https://example.com",
+			docURL:   "https://custom.larkoffice.com",
+			expected: "https://example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeURL(tt.input, tt.docURL)
+			if result != tt.expected {
+				t.Errorf("normalizeURL(%q, %q) = %q, want %q", tt.input, tt.docURL, result, tt.expected)
+			}
+		})
+	}
+}
+
+// createLinkElement 自定义 DocURL 测试
+func TestCreateLinkElement_CustomDocURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		rawURL   string
+		docURL   string
+		hasLink  bool
+		finalURL string
+	}{
+		{
+			name:     "feishu://doc/ + 自定义 DocURL",
+			text:     "文档",
+			rawURL:   "feishu://doc/ABC123",
+			docURL:   "https://custom.larkoffice.com",
+			hasLink:  true,
+			finalURL: "https://custom.larkoffice.com/docx/ABC123",
+		},
+		{
+			name:     "普通 HTTPS URL 不受 DocURL 影响",
+			text:     "链接",
+			rawURL:   "https://example.com",
+			docURL:   "https://custom.larkoffice.com",
+			hasLink:  true,
+			finalURL: "https://example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := createLinkElement(tt.text, tt.rawURL, tt.docURL)
+			if result.TextRun == nil {
+				t.Fatalf("TextRun should not be nil")
+			}
+			if *result.TextRun.Content != tt.text {
+				t.Errorf("Content = %q, want %q", *result.TextRun.Content, tt.text)
+			}
+			if tt.hasLink {
+				if result.TextRun.TextElementStyle == nil || result.TextRun.TextElementStyle.Link == nil {
+					t.Errorf("Link should not be nil")
+				} else if *result.TextRun.TextElementStyle.Link.Url != tt.finalURL {
+					t.Errorf("Link URL = %q, want %q", *result.TextRun.TextElementStyle.Link.Url, tt.finalURL)
+				}
 			}
 		})
 	}
@@ -443,7 +541,7 @@ func TestCreateLinkElement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := createLinkElement(tt.text, tt.rawURL)
+			result := createLinkElement(tt.text, tt.rawURL, "")
 			if result.TextRun == nil {
 				t.Fatalf("TextRun should not be nil")
 			}

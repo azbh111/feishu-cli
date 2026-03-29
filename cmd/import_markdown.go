@@ -548,6 +548,7 @@ func phase1CreateBlocks(
 			options := converter.ConvertOptions{
 				UploadImages: uploadImages,
 				DocumentID:   documentID,
+				DocURL:       config.Get().DocURL,
 			}
 
 			conv := converter.NewMarkdownToBlock([]byte(seg.content), options, basePath)

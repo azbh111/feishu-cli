@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larksearch "github.com/larksuite/oapi-sdk-go/v3/service/search/v2"
+
+	"github.com/riba2534/feishu-cli/internal/config"
 )
 
 // SearchMessagesOptions 搜索消息的选项
@@ -199,12 +202,18 @@ var docsTypeURLPath = map[string]string{
 }
 
 // buildDocsURL 根据文档类型和 Token 拼接飞书文档 URL
+// 使用配置的文档链接前缀（config.DocURL），默认 https://feishu.cn
 func buildDocsURL(docsType, docsToken string) string {
 	path, ok := docsTypeURLPath[docsType]
 	if !ok {
 		path = docsType
 	}
-	return fmt.Sprintf("https://feishu.cn/%s/%s", path, docsToken)
+	docURL := config.Get().DocURL
+	if docURL == "" {
+		docURL = "https://feishu.cn"
+	}
+	docURL = strings.TrimRight(docURL, "/")
+	return fmt.Sprintf("%s/%s/%s", docURL, path, docsToken)
 }
 
 // SearchDocWiki 搜索云文档

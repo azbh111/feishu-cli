@@ -190,6 +190,45 @@ func TestConvertOptionsDefaults(t *testing.T) {
 	}
 }
 
+func TestDocURLOrDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		docURL   string
+		expected string
+	}{
+		{
+			name:     "空值返回默认",
+			docURL:   "",
+			expected: "https://feishu.cn",
+		},
+		{
+			name:     "自定义值原样返回",
+			docURL:   "https://custom.larkoffice.com",
+			expected: "https://custom.larkoffice.com",
+		},
+		{
+			name:     "去除末尾斜杠",
+			docURL:   "https://custom.larkoffice.com/",
+			expected: "https://custom.larkoffice.com",
+		},
+		{
+			name:     "多个末尾斜杠",
+			docURL:   "https://custom.larkoffice.com///",
+			expected: "https://custom.larkoffice.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ConvertOptions{DocURL: tt.docURL}
+			result := opts.DocURLOrDefault()
+			if result != tt.expected {
+				t.Errorf("DocURLOrDefault() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestHeadingLevelRange(t *testing.T) {
 	// 验证标题级别范围 (1-9)
 	headingTypes := []BlockType{
