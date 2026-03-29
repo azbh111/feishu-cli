@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -116,10 +115,10 @@ func (c *diskCache) lockedWriteToDisk(key string, entry cacheEntry) error {
 	defer lockFile.Close()
 
 	// 获取排他锁（阻塞等待）
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockLock(lockFile); err != nil {
 		return fmt.Errorf("获取文件锁失败: %w", err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	defer flockUnlock(lockFile)
 
 	// 在锁内读取最新磁盘数据
 	entries := c.loadFromDisk()
@@ -178,6 +177,12 @@ func (c *diskCache) atomicWriteToDisk(entries map[string]cacheEntry) error {
 		return err
 	}
 	if err := tmpFile.Chmod(0600); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	// 刷盘，确保崩溃后数据不丢失
+	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return err

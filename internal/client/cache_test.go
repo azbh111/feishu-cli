@@ -210,7 +210,7 @@ func TestDiskCache_CleanExpired(t *testing.T) {
 	}
 }
 
-// TestDiskCache_AtomicWrite 验证 saveToDisk 使用原子写入（tempfile+rename），
+// TestDiskCache_AtomicWrite 验证 atomicWriteToDisk 使用原子写入（tempfile+rename），
 // 写入后文件始终是有效 JSON，且不残留临时文件。
 func TestDiskCache_AtomicWrite(t *testing.T) {
 	tmpDir := t.TempDir()
