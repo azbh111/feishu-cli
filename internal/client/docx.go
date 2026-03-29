@@ -14,6 +14,8 @@ import (
 const (
 	blockTypeText   = 2
 	blockTypeBullet = 12
+	BlockTypeFile   = 23
+	BlockTypeImage  = 27
 	blockTypeBoard  = 43
 )
 
