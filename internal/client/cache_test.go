@@ -2,8 +2,11 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -204,5 +207,132 @@ func TestDiskCache_CleanExpired(t *testing.T) {
 	val, _ = c.Get(ctx, "expired")
 	if val != "" {
 		t.Errorf("Get(expired) = %q, 期望空字符串", val)
+	}
+}
+
+// TestDiskCache_AtomicWrite 验证 atomicWriteToDisk 使用原子写入（tempfile+rename），
+// 写入后文件始终是有效 JSON，且不残留临时文件。
+func TestDiskCache_AtomicWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheFile := filepath.Join(tmpDir, "cache.json")
+
+	ctx := context.Background()
+	c := newDiskCache(cacheFile)
+
+	// 写入一个有效值
+	c.Set(ctx, "key", "value", 10*time.Minute)
+
+	// 验证文件是有效 JSON
+	data, err := os.ReadFile(cacheFile)
+	if err != nil {
+		t.Fatalf("ReadFile() 返回错误: %v", err)
+	}
+	var entries map[string]cacheEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatalf("写入后文件不是有效 JSON: %v", err)
+	}
+
+	// 验证没有遗留临时文件
+	matches, _ := filepath.Glob(filepath.Join(tmpDir, ".cache.json.tmp.*"))
+	if len(matches) > 0 {
+		t.Errorf("存在遗留临时文件: %v", matches)
+	}
+}
+
+// TestDiskCache_ConcurrentSameFile 验证多个独立实例并发写同一个缓存文件时，
+// 所有条目最终都不会丢失（通过文件锁保护 read-modify-write）。
+func TestDiskCache_ConcurrentSameFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheFile := filepath.Join(tmpDir, "cache.json")
+
+	ctx := context.Background()
+	const n = 20
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	// 每个 goroutine 使用独立的 diskCache 实例，模拟不同进程
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			c := newDiskCache(cacheFile)
+			key := fmt.Sprintf("key-%d", idx)
+			val := fmt.Sprintf("value-%d", idx)
+			if err := c.Set(ctx, key, val, 10*time.Minute); err != nil {
+				t.Errorf("Set(%s) 失败: %v", key, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// 验证磁盘文件是有效 JSON
+	data, err := os.ReadFile(cacheFile)
+	if err != nil {
+		t.Fatalf("ReadFile() 返回错误: %v", err)
+	}
+	var entries map[string]cacheEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatalf("并发写入后文件不是有效 JSON: %v\n文件内容: %s", err, string(data))
+	}
+
+	// 验证所有 key 都存在（文件锁保证不丢条目）
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("key-%d", i)
+		entry, ok := entries[key]
+		if !ok {
+			t.Errorf("缺少 key %q（跨进程竞争导致条目丢失）", key)
+			continue
+		}
+		expected := fmt.Sprintf("value-%d", i)
+		if entry.Value != expected {
+			t.Errorf("entries[%q].Value = %q, 期望 %q", key, entry.Value, expected)
+		}
+	}
+}
+
+// TestDiskCache_ConcurrentReadWrite 验证并发读写不会 panic 或产生损坏数据
+func TestDiskCache_ConcurrentReadWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheFile := filepath.Join(tmpDir, "cache.json")
+
+	ctx := context.Background()
+
+	// 种一个初始值
+	c := newDiskCache(cacheFile)
+	c.Set(ctx, "init", "init-value", 10*time.Minute)
+
+	const n = 20
+	var wg sync.WaitGroup
+	wg.Add(n * 2)
+
+	// 并发写
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			ci := newDiskCache(cacheFile)
+			ci.Set(ctx, fmt.Sprintf("w-%d", idx), fmt.Sprintf("v-%d", idx), 10*time.Minute)
+		}(i)
+	}
+
+	// 并发读
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			ci := newDiskCache(cacheFile)
+			ci.Get(ctx, "init")
+		}()
+	}
+
+	wg.Wait()
+
+	// 验证文件仍是有效 JSON
+	data, err := os.ReadFile(cacheFile)
+	if err != nil {
+		t.Fatalf("ReadFile() 返回错误: %v", err)
+	}
+	var entries map[string]cacheEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatalf("并发读写后文件不是有效 JSON: %v", err)
 	}
 }

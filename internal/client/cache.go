@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,6 +20,7 @@ type cacheEntry struct {
 
 // diskCache 实现 larkcore.Cache 接口，内存+磁盘两级缓存。
 // 同进程内走内存，跨进程通过磁盘文件共享 token。
+// 磁盘写入使用 tempfile+rename 保证原子性，文件锁防止跨进程竞争。
 type diskCache struct {
 	mu       sync.Mutex
 	memory   map[string]cacheEntry
@@ -69,9 +71,6 @@ func (c *diskCache) Get(ctx context.Context, key string) (string, error) {
 		return "", nil
 	}
 	if time.Now().After(entry.ExpiresAt) {
-		// 磁盘上也过期了，清理
-		delete(entries, key)
-		c.saveToDisk(entries)
 		return "", nil
 	}
 
@@ -92,14 +91,43 @@ func (c *diskCache) Set(ctx context.Context, key, value string, ttl time.Duratio
 	// 写入内存
 	c.memory[key] = entry
 
-	// 写入磁盘（合并已有条目）
+	// 文件锁保护 read-modify-write，防止跨进程竞争
+	return c.lockedWriteToDisk(key, entry)
+}
+
+// lockFilePath 返回文件锁路径（与缓存文件同目录）
+func (c *diskCache) lockFilePath() string {
+	return c.filePath + ".lock"
+}
+
+// lockedWriteToDisk 在文件锁保护下执行 read-modify-write
+func (c *diskCache) lockedWriteToDisk(key string, entry cacheEntry) error {
+	dir := filepath.Dir(c.filePath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+
+	// 打开锁文件（不存在则创建）
+	lockFile, err := os.OpenFile(c.lockFilePath(), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("打开锁文件失败: %w", err)
+	}
+	defer lockFile.Close()
+
+	// 获取排他锁（阻塞等待）
+	if err := flockLock(lockFile); err != nil {
+		return fmt.Errorf("获取文件锁失败: %w", err)
+	}
+	defer flockUnlock(lockFile)
+
+	// 在锁内读取最新磁盘数据
 	entries := c.loadFromDisk()
 	if entries == nil {
 		entries = make(map[string]cacheEntry)
 	}
 	entries[key] = entry
 
-	// 顺便清理已过期的条目
+	// 清理已过期的条目
 	now := time.Now()
 	for k, e := range entries {
 		if now.After(e.ExpiresAt) {
@@ -107,7 +135,8 @@ func (c *diskCache) Set(ctx context.Context, key, value string, ttl time.Duratio
 		}
 	}
 
-	return c.saveToDisk(entries)
+	// 原子写入：tempfile + rename
+	return c.atomicWriteToDisk(entries)
 }
 
 // loadFromDisk 从磁盘读取缓存文件，解析失败返回 nil
@@ -118,20 +147,55 @@ func (c *diskCache) loadFromDisk() map[string]cacheEntry {
 	}
 	var entries map[string]cacheEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
+		// 损坏的文件静默降级为空缓存
 		return nil
 	}
 	return entries
 }
 
-// saveToDisk 将缓存写入磁盘（0600 权限）
-func (c *diskCache) saveToDisk(entries map[string]cacheEntry) error {
-	dir := filepath.Dir(c.filePath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
+// atomicWriteToDisk 通过临时文件+rename 原子写入，避免写入中途崩溃导致文件损坏
+func (c *diskCache) atomicWriteToDisk(entries map[string]cacheEntry) error {
 	data, err := json.Marshal(entries)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.filePath, data, 0600)
+
+	dir := filepath.Dir(c.filePath)
+	base := filepath.Base(c.filePath)
+
+	// 在同目录创建临时文件（同文件系统才能保证 rename 原子性）
+	tmpFile, err := os.CreateTemp(dir, "."+base+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// 写入数据并设置权限
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmpFile.Chmod(0600); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	// 刷盘，确保崩溃后数据不丢失
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	// 原子替换目标文件
+	if err := os.Rename(tmpPath, c.filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("原子替换文件失败: %w", err)
+	}
+	return nil
 }
