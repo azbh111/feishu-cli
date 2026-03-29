@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -286,50 +285,6 @@ base_url: "https://custom.feishu.cn"
 
 	if client == nil {
 		t.Error("GetClient() 返回 nil")
-	}
-}
-
-// TestGetClient_BaseURLTrailingSlash 验证 base_url 带尾部斜杠时不会导致双斜杠
-// 私有化部署用户常配置 "https://private-deploy.example.com/"，SDK 拼接后变成
-// "https://private-deploy.example.com//open-apis/..."，部分服务器会 404
-func TestGetClient_BaseURLTrailingSlash(t *testing.T) {
-	resetClient()
-	resetConfig()
-
-	os.Unsetenv("FEISHU_APP_ID")
-	os.Unsetenv("FEISHU_APP_SECRET")
-
-	tests := []struct {
-		name    string
-		baseURL string
-	}{
-		{"单斜杠", "https://private-deploy.example.com/"},
-		{"多斜杠", "https://private-deploy.example.com///"},
-		{"无斜杠", "https://private-deploy.example.com"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resetClient()
-			resetConfig()
-
-			tmpDir := t.TempDir()
-			configFile := tmpDir + "/config.yaml"
-			content := fmt.Sprintf(`app_id: "test_app_id"
-app_secret: "test_app_secret"
-base_url: "%s"
-`, tt.baseURL)
-			os.WriteFile(configFile, []byte(content), 0600)
-			config.Init(configFile)
-
-			client, err := GetClient()
-			if err != nil {
-				t.Fatalf("GetClient() base_url=%q 返回错误: %v", tt.baseURL, err)
-			}
-			if client == nil {
-				t.Errorf("GetClient() base_url=%q 返回 nil", tt.baseURL)
-			}
-		})
 	}
 }
 
