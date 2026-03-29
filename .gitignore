@@ -45,3 +45,5 @@ temp/
 # 导出的资源文件
 assets/
 *.md.bak
+.claude
+.private-test
