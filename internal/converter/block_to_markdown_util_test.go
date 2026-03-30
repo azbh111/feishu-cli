@@ -452,9 +452,14 @@ func TestEscapeMarkdown(t *testing.T) {
 			want:  "\\[link\\]",
 		},
 		{
-			name:  "井号",
+			name:  "井号_不转义",
 			input: "#hashtag",
-			want:  "\\#hashtag",
+			want:  "#hashtag",
+		},
+		{
+			name:  "井号_行内不转义",
+			input: "C# language",
+			want:  "C# language",
 		},
 		{
 			name:  "波浪号",
@@ -477,9 +482,19 @@ func TestEscapeMarkdown(t *testing.T) {
 			want:  "col1\\|col2",
 		},
 		{
-			name:  "大于号",
+			name:  "大于号_不转义",
 			input: "> quote",
-			want:  "\\> quote",
+			want:  "> quote",
+		},
+		{
+			name:  "箭头符号_不转义",
+			input: "构建词书编码 -> planId 映射",
+			want:  "构建词书编码 -> planId 映射",
+		},
+		{
+			name:  "大于比较_不转义",
+			input: "a > b",
+			want:  "a > b",
 		},
 		{
 			name:  "混合特殊字符",

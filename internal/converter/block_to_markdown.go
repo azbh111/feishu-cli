@@ -1471,6 +1471,7 @@ func (c *BlockToMarkdown) wrapHighlightSpan(style *larkdocx.TextElementStyle, te
 }
 
 // escapeMarkdown 转义 Markdown 特殊字符，避免纯文本被误解析
+// 注意：> 和 # 仅在行首有特殊含义，此函数处理的是行内 TextRun 片段，无需转义
 func escapeMarkdown(text string) string {
 	replacer := strings.NewReplacer(
 		`\`, `\\`,
@@ -1478,12 +1479,10 @@ func escapeMarkdown(text string) string {
 		`_`, `\_`,
 		`[`, `\[`,
 		`]`, `\]`,
-		`#`, `\#`,
 		`~`, `\~`,
 		"`", "\\`",
 		`$`, `\$`,
 		`|`, `\|`,
-		`>`, `\>`,
 	)
 	return replacer.Replace(text)
 }
