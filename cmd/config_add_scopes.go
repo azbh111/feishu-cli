@@ -33,6 +33,7 @@ var scopeDomains = map[string][]string{
 	},
 	"minutes": {
 		"minutes:minutes:readonly",
+		"minutes:minute.transcript:readonly",
 	},
 	"doc": {
 		"docx:document",
